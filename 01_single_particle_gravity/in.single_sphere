@@ -1,0 +1,94 @@
+################################################################################
+# brief: a single sphere accelerating under gravity in a periodic box          #
+# authors: Daniel Queteschiner                                                 #
+# date: Dec. 2020                                                              #
+# copyright: 2020- JKU Linz                                                    #
+################################################################################
+
+# define the attributes associated with the particles,
+# 'granular' (or 'sphere') style uses diameter, mass and angular velocity
+atom_style      granular
+
+# use an array to map particle IDs to local storage index,
+# do not sort atoms spatially
+atom_modify     map array sort 0 0
+
+# set simulation domain to be periodic in x y z
+boundary        p p p
+
+# save communication by turning off Newton's 3rd law of pairwise interaction,
+# note: this setting only influences communication between procs, Newton's
+# 3rd law is still used for contact force calculations
+newton          off
+
+# use a single value for ghost particle cutoff distance and
+# enable velocity to be communicated with ghost particles
+communicate     single vel yes
+
+# set unit system to SI
+units           si
+
+# define the region used as simulation domain (min/max X, min/max Y, min/max Z)
+region          domain block -0.1 0.1 -0.1 0.1 -0.1 0.1 units box
+
+# create the simulation domain using the region above and 1 type of particles
+create_box      1 domain
+
+# specify the skin distance for neighbor list generation
+neighbor        0.001 bin
+
+# never delay the building of pairwise neighbor lists
+neigh_modify    delay 0
+
+# define the material properties required for granular pair styles
+fix     m1 all property/global youngsModulus peratomtype 1.e7
+fix     m2 all property/global poissonsRatio peratomtype 0.45
+fix     m3 all property/global coefficientRestitution peratomtypepair 1 0.3
+fix     m4 all property/global coefficientFriction peratomtypepair 1 0.5
+
+# use the Hertzian contact model considering tangential contact history
+pair_style gran model hertz tangential history
+
+# no force field coefficients to be specified for the 'gran' pair style
+pair_coeff * *
+
+# set the time step
+timestep        0.00001
+
+# create a single particle of type 1 at position 0 0 0
+# by default particles are assigned to a group named 'all'
+create_atoms    1 single 0 0 0 units box
+
+# set diameter and density of created particle
+set             atom 1 diameter 0.01 density 1000.
+
+# set gravity to act in -z direction
+fix     gravi all gravity 9.81 vector 0.0 0.0 -1.0
+
+# use constant NVE integration to update position, velocity and angular velocity
+fix     integr all nve/sphere
+
+# output settings, include kinetic energy
+thermo_style    custom step atoms ke
+
+# set frequency of output
+thermo          1000
+
+# ignore particles leaving the simulation domain,
+# do not normalize thermodynamic output values by the number of atoms
+thermo_modify   lost ignore norm no
+
+# set dynamic to 'no' as number of particles does not change
+# for a single particle we need to set extra dof to 0 to obtain correct ke
+compute_modify  thermo_temp dynamic no extra 0
+
+# dump particle data every 500 time steps
+dump    dmp all custom/vtk 500 post/single_*.vtk id type x y z vx vy vz fx fy fz &
+        omegax omegay omegaz radius
+
+# run 100000 time steps
+run     100000
+
+# final velocity & kinetic energy: v = 9.81 m/s, ke = 0.025194552 J
+
+

@@ -1,0 +1,106 @@
+################################################################################
+# brief: a single sphere colliding with mesh geometry                          #
+# authors: Daniel Queteschiner                                                 #
+# date: Dec. 2020                                                              #
+# copyright: 2020- JKU Linz                                                    #
+################################################################################
+
+# define the attributes associated with the particles,
+# 'granular' (or 'sphere') style uses diameter, mass and angular velocity
+atom_style      granular
+
+# use an array to map particle IDs to local storage index,
+# do not sort atoms spatially
+atom_modify     map array sort 0 0
+
+# set simulation domain to be periodic in x y but fixed in z
+boundary        p p f
+
+# save communication by turning off Newton's 3rd law of pairwise interaction,
+# note: this setting only influences communication between procs, Newton's
+# 3rd law is still used for contact force calculations
+newton          off
+
+# use a single value for ghost particle cutoff distance and
+# enable velocity to be communicated with ghost particles
+communicate     single vel yes
+
+# set unit system to SI
+units           si
+
+# define the region used as simulation domain (min/max X, min/max Y, min/max Z)
+region          domain block -0.1 0.1 -0.1 0.1 -0.1 0.1 units box
+
+# create the simulation domain and 1 material type for particles and walls
+create_box      1 domain
+
+# specify the skin distance for neighbor list generation
+neighbor        0.001 bin
+neigh_modify    delay 0
+
+# define the material properties required for granular pair styles
+fix     m1 all property/global youngsModulus peratomtype 1.e7
+fix     m2 all property/global poissonsRatio peratomtype 0.45
+fix     m3 all property/global coefficientRestitution peratomtypepair 1 0.9
+fix     m4 all property/global coefficientFriction peratomtypepair 1 0.2
+
+# use the Hertzian contact model considering tangential contact history
+pair_style gran model hertz tangential history
+pair_coeff * *
+
+# set the time step
+timestep        0.00001
+
+# create a single particle of type 1 at position -0.09 -0.075 0.05
+# by default particles are assigned to a group named 'all'
+create_atoms    1 single -0.09 -0.075 0.05 units box
+
+# set diameter, density and initial velocity of created particle
+set             atom 1 diameter 0.01 density 1000. vx 0.5 vy 0.5
+
+# z dimension of the domain is fixed so that particles crossing the boundaries
+# would be lost; we set up walls at the top and the bottom of the domain to
+# prevent this, additionally we place a cylindrical wall at the origin
+
+# define the meshes used for walls
+# a quad with the same size as the domain, note that meshes must not exceed the 
+# domain boundaries 
+fix mesh_top    all mesh/surface file meshes/zplane.stl type 1 move 0.0 0.0  0.1
+# the same quad but placed at the bottom of the domain
+fix mesh_bottom all mesh/surface file meshes/zplane.stl type 1 move 0.0 0.0 -0.1
+# a cylindrical mesh with radius 30 mm
+fix mesh_cyl    all mesh/surface file meshes/zcylinder.stl type 1 move 0.0 0.0 -0.1
+
+# use the meshes defined above as walls; note that specifying the wall contact
+# model is analogous to the pair_style command; there can only be a single fix
+# of style 'wall/gran' for mesh based walls
+fix mesh_walls all wall/gran model hertz tangential history mesh n_meshes 3 &
+    meshes mesh_top mesh_bottom mesh_cyl
+
+# set gravity to act in -z direction
+fix     gravi all gravity 9.81 vector 0.0 0.0 -1.0
+
+# use constant NVE integration to update position, velocity and angular velocity 
+fix     integr all nve/sphere
+
+# output settings, include kinetic energy
+thermo_style    custom step atoms ke
+
+# set frequency of output
+thermo          1000
+
+# ignore particles leaving the simulation domain,
+# do not normalize thermodynamic output values by the number of atoms
+thermo_modify   lost ignore norm no
+
+# set dynamic 'to' no as number of particles does not change
+# for a single particle we need to set extra dof to 0 to obtain correct ke
+compute_modify  thermo_temp dynamic no extra 0
+
+# dump particle data every 500 time steps
+dump    dmp all custom/vtk 1000 post/mesh_wall_*.vtk id type x y z vx vy vz &
+        fx fy fz omegax omegay omegaz radius
+
+# run 100000 time steps
+run     200000
+

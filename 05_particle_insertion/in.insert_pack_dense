@@ -1,0 +1,96 @@
+################################################################################
+# brief: fills a region with particles using advancing front packing           #
+# authors: Daniel Queteschiner                                                 #
+# date: Dec. 2020                                                              #
+# copyright: 2020- JKU Linz                                                    #
+################################################################################
+
+# define the attributes associated with the particles,
+# 'granular' (or 'sphere') style uses diameter, mass and angular velocity
+atom_style      granular
+
+# use an array to map particle IDs to local storage index
+atom_modify     map array
+
+# set simulation domain to be fixed in x y z
+boundary        f f f
+
+# save communication by turning off Newton's 3rd law of pairwise interaction,
+# note: this setting only influences communication between procs, Newton's
+# 3rd law is still used for contact force calculations
+newton          off
+
+# use a single value for ghost particle cutoff distance and
+# enable velocity to be communicated with ghost particles
+communicate     single vel yes
+
+# set up how processors are mapped as a 3d logical grid to the simulation box
+processors      * 1 1
+
+# set unit system to SI
+units           si
+
+# define the region used as simulation domain (min/max X, min/max Y, min/max Z)
+region          domain block -0.2 0.2 -0.2 0.2 -0.2 0.2 units box
+
+# create the simulation domain using the region above and 1 type of particles
+create_box      1 domain
+
+# specify the skin distance for neighbor list generation
+neighbor        0.01 bin
+
+# never delay the building of pairwise neighbor lists
+neigh_modify    delay 0
+
+# define the material properties required for granular pair styles
+fix     m1 all property/global youngsModulus peratomtype 5.e6
+fix     m2 all property/global poissonsRatio peratomtype 0.45
+fix     m3 all property/global coefficientRestitution peratomtypepair 1 0.9
+fix     m4 all property/global coefficientFriction peratomtypepair 1 0.05
+
+# use the Hertzian contact model considering tangential contact history
+pair_style gran model hertz tangential history
+
+# no force field coefficients to be specified for the 'gran' pair style
+pair_coeff * *
+
+# set the time step
+timestep   0.00001
+
+# particle template and distributions
+fix     pts1 all particletemplate/sphere 654648 atom_type 1 density constant 2500 radius constant 0.01
+
+fix     pdd1 all particledistribution/discrete 1979997 1 pts1 1.0
+
+fix     ins_pack_dense all insert/pack/dense seed 787123 region domain distributiontemplate pdd1 &
+        volumefraction_region 0.4
+
+# use constant NVE integration to update position, velocity and angular velocity
+fix     integr all nve/sphere
+
+# compute rotational kinetic energy
+compute         rke all erotate/sphere
+
+# output settings, include kinetic energy,
+# note how the above compute command is referenced here by 'c_' + compute id
+thermo_style    custom step atoms ke c_rke vol
+
+# set frequency of output
+thermo          1000
+
+# ignore particles leaving the simulation domain,
+# do not normalize thermodynamic output values by the number of atoms
+thermo_modify   lost ignore norm no
+
+# set dynamic 'to' no as number of particles does not change
+compute_modify  thermo_temp dynamic no
+
+# let insertion happen
+run 1
+
+dump dmp all custom/vtk 1 post/packdense_*.vtk &
+     id type x y z vx vy vz fx fy fz omegax omegay omegaz radius
+
+# run 1 time step to create dump file
+run 1
+
